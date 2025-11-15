@@ -1,0 +1,66 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Open-LLM-Vtuber</title>
+
+    <!-- 持久版预置与迁移脚本（放在入口 JS 之前） -->
+    <script>
+      (function () {
+        var origin = location.origin;
+        var ws = origin.replace(/^http/, 'ws') + '/client-ws';
+        var defaultBg = origin + '/bg/ceiling-window-room-night.jpeg';
+
+        // 安全读/写 JSON 的工具
+        function jget(k) {
+          var v = localStorage.getItem(k);
+          if (v == null) return null;
+          try { return JSON.parse(v); } catch { return v; }
+        }
+        function jset(k, v) { localStorage.setItem('' + k, JSON.stringify(v)); }
+
+        // 判定：是否为“无效/不该再用”的旧值（指向 http 或 127.0.0.1）
+        function isBad(v) {
+          if (!v || typeof v !== 'string') return true;
+          if (/^http:\/\//i.test(v)) return true;
+          if (/^https?:\/\/127\.0\.0\.1/i.test(v)) return true;
+          return false;
+        }
+
+        // 1) 清理明显的历史脏键（值里含 http:// 或 127.0.0.1）
+        Object.keys(localStorage).forEach(function(k){
+          var raw = localStorage.getItem(k) || '';
+          if (/127\.0\.0\.1|http:\/\//i.test(raw)) localStorage.removeItem(k);
+        });
+
+        // 2) 统一 base / ws 类键（仅在缺失或无效时写）
+        ['serverBaseUrl','baseUrl','apiBaseUrl','httpBase','wsBase','wsBaseUrl'].forEach(function(k){
+          var v = jget(k);
+          if (isBad(v)) jset(k, origin);
+        });
+        var _ws = jget('wsUrl');
+        if (isBad(_ws)) jset('wsUrl', ws);
+
+        // 3) 背景：修复 backgroundUrl / selectedBgUrl；移除会“反改”的 customBgUrl
+        var bg = jget('backgroundUrl');
+        if (isBad(bg)) jset('backgroundUrl', defaultBg);
+
+        var sbg = jget('selectedBgUrl');
+        if (isBad(sbg)) jset('selectedBgUrl', jget('backgroundUrl') || defaultBg);
+
+        localStorage.removeItem('customBgUrl'); // 旧逻辑可能用它覆盖背景
+
+        // （可选）首屏若你想强制默认模型直出：
+        // jset('model_url', '/live2d-models/mao_pro/runtime/mao_pro.model3.json');
+      })();
+    </script>
+
+    <!-- 业务入口脚本，必须在预置脚本之后 -->
+    <script type="module" crossorigin src="./assets/index-DmU5m1tj.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-BpkhdyQ0.css">
+  </head>
+
+  <body>
+    <div id="root"></div>
+  </body>
+</html>

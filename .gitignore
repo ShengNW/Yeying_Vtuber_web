@@ -1,0 +1,20 @@
+# 忽略各种备份 / 旧文件，但本地保留
+*.bak
+*_old_*
+index_old*.html
+
+# assets：默认忽略全部，只保留最新这两个打包文件
+/assets/*
+!/assets/index-BpkhdyQ0.css
+!/assets/index-DmU5m1tj.js
+
+# 系统 / 编辑器
+.DS_Store
+.idea/
+.vscode/
+
+# 若以后不小心把源码或构建目录放进来，也一并忽略
+node_modules/
+dist/
+out/
+*.log
