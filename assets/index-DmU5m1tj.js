@@ -36317,6 +36317,103 @@ const getTranslation = () => {
     return (key) => key;
   }
 };
+const FALLBACK_WS_URL = "ws://127.0.0.1:12393/client-ws";
+const FALLBACK_BASE_URL = "http://127.0.0.1:12393";
+const SLUG_PATH_PATTERN = /^\/s\/[^/]+/;
+const getBasePath = () => {
+  if (typeof window === "undefined") {
+    return "";
+  }
+  const match = window.location.pathname.match(SLUG_PATH_PATTERN);
+  return match ? match[0] : "";
+};
+const stripBasePath = (path) => {
+  if (!path || typeof path !== "string") {
+    return path;
+  }
+  const normalized = path.startsWith("/") ? path : "/" + path;
+  if (typeof window === "undefined") {
+    return normalized;
+  }
+  const base = getBasePath();
+  if (!base) {
+    return normalized;
+  }
+  if (normalized === base) {
+    return "/";
+  }
+  if (normalized.startsWith(base + "/")) {
+    return normalized.slice(base.length);
+  }
+  return normalized;
+};
+const withBasePath = (path) => {
+  if (!path || typeof path !== "string" || typeof window === "undefined") {
+    return path;
+  }
+  if (!path.startsWith("/")) {
+    return path;
+  }
+  const base = getBasePath();
+  if (!base) {
+    return path;
+  }
+  if (path === base || path.startsWith(base + "/")) {
+    return path;
+  }
+  return base + path;
+};
+const normalizeBaseUrl = (value) => {
+  if (!value || typeof value !== "string") {
+    return "";
+  }
+  return value.endsWith("/") ? value.slice(0, -1) : value;
+};
+const buildDefaultBaseUrl = () => {
+  if (typeof window === "undefined") {
+    return FALLBACK_BASE_URL;
+  }
+  return window.location.origin + getBasePath();
+};
+const buildDefaultWsUrl = () => {
+  if (typeof window === "undefined") {
+    return FALLBACK_WS_URL;
+  }
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  return protocol + "//" + window.location.host + withBasePath("/client-ws");
+};
+const DEFAULT_BASE_URL = buildDefaultBaseUrl();
+const DEFAULT_WS_URL = buildDefaultWsUrl();
+const normalizeSameOriginUrl = (url) => {
+  if (!url || typeof url !== "string" || typeof window === "undefined") {
+    return url;
+  }
+  try {
+    const parsed = new URL(url);
+    if (parsed.host !== window.location.host) {
+      return url;
+    }
+    parsed.pathname = withBasePath(stripBasePath(parsed.pathname || "/"));
+    return parsed.toString();
+  } catch (error2) {
+    console.warn("Failed to normalize URL:", url, error2);
+    return url;
+  }
+};
+const resolveStaticUrl = (value, baseUrl) => {
+  if (!value || typeof value !== "string") {
+    return value;
+  }
+  const trimmed = value.trim();
+  if (/^https?:\/\//i.test(trimmed)) {
+    return normalizeSameOriginUrl(trimmed);
+  }
+  const sanitized = trimmed.replace(/^\.\/+/, "");
+  const relative = sanitized.startsWith("/") ? sanitized : "/" + sanitized;
+  const normalizedBase = normalizeBaseUrl(baseUrl || DEFAULT_BASE_URL);
+  const normalizedPath = stripBasePath(relative);
+  return normalizedBase + normalizedPath;
+};
 class WebSocketService {
   static instance;
   ws = null;
@@ -36410,8 +36507,6 @@ class WebSocketService {
   }
 }
 const wsService = WebSocketService.getInstance();
-const DEFAULT_WS_URL = "ws://127.0.0.1:12393/client-ws";
-const DEFAULT_BASE_URL = "http://127.0.0.1:12393";
 const WebSocketContext = React.createContext({
   sendMessage: wsService.sendMessage.bind(wsService),
   wsState: "CLOSED",
@@ -36674,13 +36769,18 @@ function Live2DConfigProvider({ children }) {
       setModelInfoState(void 0);
       return;
     }
-    const finalScale = Number(info.kScale || 0.5) * 2;
+    const normalizedInfo = {
+      ...info,
+      url: resolveStaticUrl(info.url, defaultBaseUrl),
+      resourcePath: info.resourcePath ? resolveStaticUrl(info.resourcePath, defaultBaseUrl) : info.resourcePath
+    };
+    const finalScale = Number(normalizedInfo.kScale || 0.5) * 2;
     console.log("Setting model info with default scale:", finalScale);
     setModelInfoState({
-      ...info,
+      ...normalizedInfo,
       kScale: finalScale,
-      pointerInteractive: "pointerInteractive" in info ? info.pointerInteractive : modelInfo?.pointerInteractive ?? true,
-      scrollToResize: "scrollToResize" in info ? info.scrollToResize : modelInfo?.scrollToResize ?? true
+      pointerInteractive: "pointerInteractive" in normalizedInfo ? normalizedInfo.pointerInteractive : modelInfo?.pointerInteractive ?? true,
+      scrollToResize: "scrollToResize" in normalizedInfo ? normalizedInfo.scrollToResize : modelInfo?.scrollToResize ?? true
     });
   };
   const contextValue = reactExports.useMemo(
@@ -51805,8 +51905,8 @@ function VADProvider({ children }) {
       positiveSpeechThreshold: settings2.positiveSpeechThreshold / 100,
       negativeSpeechThreshold: settings2.negativeSpeechThreshold / 100,
       redemptionFrames: settings2.redemptionFrames,
-      baseAssetPath: "./libs/",
-      onnxWASMBasePath: "./libs/",
+      baseAssetPath: withBasePath("/libs/") || "/libs/",
+      onnxWASMBasePath: withBasePath("/libs/") || "/libs/",
       onSpeechStart: handleSpeechStart,
       onSpeechRealStart: handleSpeechRealStart,
       onFrameProcessed: handleFrameProcessed,
@@ -66990,7 +67090,8 @@ const TAP_DURATION_THRESHOLD_MS = 200;
 const DRAG_DISTANCE_THRESHOLD_PX = 5;
 function parseModelUrl(url) {
   try {
-    const urlObj = new URL(url);
+    const baseOrigin = typeof window !== "undefined" ? window.location.origin : FALLBACK_BASE_URL;
+    const urlObj = new URL(url, baseOrigin);
     const { pathname } = urlObj;
     const lastSlashIndex = pathname.lastIndexOf("/");
     if (lastSlashIndex === -1) {
@@ -80136,11 +80237,16 @@ function WebSocketHandler({ children }) {
         if (message.client_uid) {
           setSelfUid(message.client_uid);
         }
-        setPendingModelInfo(message.model_info);
-        if (message.model_info && !message.model_info.url.startsWith("http")) {
-          const modelUrl = baseUrl + message.model_info.url;
-          message.model_info.url = modelUrl;
+        if (message.model_info) {
+          const resolvedBase = baseUrl || defaultBaseUrl;
+          if (message.model_info.url) {
+            message.model_info.url = resolveStaticUrl(message.model_info.url, resolvedBase);
+          }
+          if (message.model_info.resourcePath) {
+            message.model_info.resourcePath = resolveStaticUrl(message.model_info.resourcePath, resolvedBase);
+          }
         }
+        setPendingModelInfo(message.model_info);
         setAiState("idle");
         break;
       case "full-text":
@@ -81864,7 +81970,7 @@ if (typeof window !== "undefined") {
   const loadLive2DCore = () => {
     return new Promise((resolve2, reject2) => {
       const script = document.createElement("script");
-      script.src = "./libs/live2dcubismcore.js";
+      script.src = withBasePath("/libs/live2dcubismcore.js") || "/libs/live2dcubismcore.js";
       script.onload = () => {
         console.log("Live2D Cubism Core loaded successfully.");
         resolve2();

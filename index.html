@@ -8,8 +8,29 @@
     <script>
       (function () {
         var origin = location.origin;
-        var ws = origin.replace(/^http/, 'ws') + '/client-ws';
-        var defaultBg = origin + '/bg/ceiling-window-room-night.jpeg';
+        var basePath = (function () {
+          var match = (location.pathname || '').match(/^\/s\/[^/]+/);
+          return match ? match[0] : '';
+        })();
+        function needsSlugFix(urlValue) {
+          if (!basePath || !urlValue || typeof urlValue !== 'string') return false;
+          try {
+            var candidate = urlValue;
+            if (/^wss?:/i.test(candidate)) {
+              candidate = candidate.replace(/^ws/i, 'http');
+            }
+            var parsed = new URL(candidate, origin);
+            if (parsed.host !== location.host) return false;
+            var path = parsed.pathname || '/';
+            return !(path === basePath || path.indexOf(basePath + '/') === 0);
+          } catch (e) {
+            return false;
+          }
+        }
+        var httpBase = origin + basePath;
+        var wsBase = (location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.host + basePath;
+        var ws = wsBase + '/client-ws';
+        var defaultBg = httpBase + '/bg/ceiling-window-room-night.jpeg';
 
         // 安全读/写 JSON 的工具
         function jget(k) {
@@ -34,16 +55,20 @@
         });
 
         // 2) 统一 base / ws 类键（仅在缺失或无效时写）
-        ['serverBaseUrl','baseUrl','apiBaseUrl','httpBase','wsBase','wsBaseUrl'].forEach(function(k){
+        ['serverBaseUrl','baseUrl','apiBaseUrl','httpBase'].forEach(function(k){
           var v = jget(k);
-          if (isBad(v)) jset(k, origin);
+          if (isBad(v) || needsSlugFix(v)) jset(k, httpBase);
+        });
+        ['wsBase','wsBaseUrl'].forEach(function(k){
+          var v = jget(k);
+          if (isBad(v) || needsSlugFix(v)) jset(k, wsBase);
         });
         var _ws = jget('wsUrl');
-        if (isBad(_ws)) jset('wsUrl', ws);
+        if (isBad(_ws) || needsSlugFix(_ws)) jset('wsUrl', ws);
 
         // 3) 背景：修复 backgroundUrl / selectedBgUrl；移除会“反改”的 customBgUrl
         var bg = jget('backgroundUrl');
-        if (isBad(bg)) jset('backgroundUrl', defaultBg);
+        if (isBad(bg) || needsSlugFix(bg)) jset('backgroundUrl', defaultBg);
 
         var sbg = jget('selectedBgUrl');
         if (isBad(sbg)) jset('selectedBgUrl', jget('backgroundUrl') || defaultBg);
